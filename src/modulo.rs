@@ -1,139 +1,79 @@
-use crate::{EAdd, EFusedMulAdd, EMul, ERem, ESub, El, ElT, ElTLift};
-use std::{fmt, mem};
+use crate::{El, SAdd, SFusedMulAdd, SMul, SRem, SSub, Structure, SuperStructure};
+use std::{borrow::Cow, fmt, mem};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Mod<T: ElT + ERem> {
-    v: T::V,
-    mod_and_td: (T::V, T::TD),
+pub struct Mod<S: Structure + SRem> {
+    mod_: S::V,
+    inner: S,
 }
-impl<T: ERem> ElT for Mod<T> {
-    type V = T::V;
-    type TD = (T::V, T::TD);
-    fn take(self) -> El<Self::V, Self::TD> {
-        El {
-            v: self.v,
-            td: self.mod_and_td,
+impl<S: SRem> Structure for Mod<S> {
+    type V = S::V;
+    fn fmt_v(&self, v: &Self::V, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        self.inner.fmt_v(v, f)
+    }
+}
+impl<S: SRem> std::fmt::Display for Mod<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        if f.alternate() {
+            write!(f, ", ")?;
         }
-    }
-    fn of(el: El<Self::V, Self::TD>) -> Self {
-        Self {
-            v: el.v,
-            mod_and_td: el.td,
-        }
-    }
-    fn as_ref(&self) -> (&Self::V, &Self::TD) {
-        (&self.v, &self.mod_and_td)
-    }
-    fn as_mut(&mut self) -> (&mut Self::V, &Self::TD) {
-        (&mut self.v, &self.mod_and_td)
-    }
-    fn fmt_v(
-        v: &Self::V,
-        mod_and_td: &Self::TD,
-        f: &mut fmt::Formatter<'_>,
-    ) -> Result<(), fmt::Error> {
-        let (_, td) = mod_and_td;
-        T::fmt_v(v, td, f)
-    }
-    fn fmt_td(mod_and_td: &Self::TD, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        let (mod_, td) = mod_and_td;
-        write!(f, "(mod ")?;
-        T::fmt_v(mod_, td, f)?;
-        write!(f, ")")?;
-        T::fmt_td(td, f)
+        write!(f, "mod ")?;
+        self.inner.fmt_v(&self.mod_, f)?;
+        write!(f, "{:#}", self.inner)
     }
 }
-impl<T: ERem> ElTLift for Mod<T> {
-    type Inner = T;
-    fn lifted_from(inner: T, td: Self::TD) -> Self {
-        let El { v, td: inner_td } = inner.take();
-        assert_eq!(inner_td, td.1);
-        Self { v, mod_and_td: td }
+impl<S: SRem> SuperStructure for Mod<S> {
+    type Inner = S;
+    fn lifted_from<'a>(&'a self, inner: El<'a, Self::Inner>) -> El<'a, Self> {
+        let El { v, s } = inner;
+        assert_eq!(&self.inner, s);
+        El { v, s: self }
     }
-}
-impl<T: EAdd + ERem> std::ops::Add for Mod<T> {
-    op_body_add!(Mod<T>);
-}
-impl<T: ESub + ERem> std::ops::Sub for Mod<T> {
-    op_body_sub!(Mod<T>);
-}
-impl<T: EMul + ERem> std::ops::Mul for Mod<T> {
-    op_body_mul!(Mod<T>);
-}
-impl<T: EAdd + ERem> std::ops::AddAssign<&Mod<T>> for Mod<T> {
-    op_body_add_assign!(Mod<T>);
-}
-impl<T: ESub + ERem> std::ops::SubAssign<&Mod<T>> for Mod<T> {
-    op_body_sub_assign!(Mod<T>);
-}
-impl<T: EMul + ERem> std::ops::MulAssign<&Mod<T>> for Mod<T> {
-    op_body_mul_assign!(Mod<T>);
 }
 
-impl<T: ERem> Mod<T> {
-    pub fn new(val: T, mod_: T) -> Self {
-        let val = val.take();
-        let mod_ = mod_.take();
-        assert_eq!(val.td, mod_.td);
+impl<S: SRem> Mod<S> {
+    pub fn new(mod_: El<'_, S>) -> Self {
         Self {
-            v: T::rem(val.v, mod_.v.clone(), &val.td),
-            mod_and_td: (mod_.v, mod_.td),
+            mod_: mod_.v.into_owned(),
+            inner: mod_.s.clone(),
         }
     }
 }
-impl<T: EAdd + ERem> EAdd for Mod<T> {
-    fn zero((_, td): &Self::TD) -> Self::V {
-        T::zero(td)
+impl<T: SAdd + SRem> SAdd for Mod<T> {
+    fn zero(&self) -> Cow<'_, Self::V> {
+        self.inner.zero()
     }
-    fn add_ref(lhs: &Self::V, rhs: &Self::V, (mod_, td): &Self::TD) -> Self::V {
-        let sum: Self::V = T::add_ref(lhs, rhs, td);
-        T::rem_ref_rhs(sum, mod_, td)
-    }
-    fn add_ref_lhs(lhs: &Self::V, rhs: Self::V, (mod_, td): &Self::TD) -> Self::V {
-        let sum: Self::V = T::add_ref_lhs(lhs, rhs, td);
-        T::rem_ref_rhs(sum, mod_, td)
-    }
-    fn add_ref_rhs(lhs: Self::V, rhs: &Self::V, (mod_, td): &Self::TD) -> Self::V {
-        let sum: Self::V = T::add_ref_rhs(lhs, rhs, td);
-        T::rem_ref_rhs(sum, mod_, td)
-    }
-    fn add(lhs: Self::V, rhs: Self::V, (mod_, td): &Self::TD) -> Self::V {
-        let sum: Self::V = T::add(lhs, rhs, td);
-        T::rem_ref_rhs(sum, mod_, td)
+    fn add<'a>(&'a self, lhs: Cow<'a, Self::V>, rhs: Cow<'a, Self::V>) -> Cow<'a, Self::V> {
+        self.inner
+            .rem(self.inner.add(lhs, rhs), Cow::Borrowed(&self.mod_))
     }
 }
-impl<T: ESub + ERem> ESub for Mod<T> {
-    fn negate(x: &mut Self::V, (mod_, td): &Self::TD) {
-        *x = T::sub_ref_lhs(mod_, mem::take(x), td);
+impl<T: SSub + SRem> SSub for Mod<T> {
+    fn negate<'a>(&'a self, x: &mut Cow<'a, Self::V>) {
+        *x = self.inner.sub(Cow::Borrowed(&self.mod_), mem::take(x));
     }
-    fn sub(lhs: Self::V, rhs: Self::V, (mod_, td): &Self::TD) -> Self::V {
-        let diff: Self::V = T::sub(lhs, rhs, td);
-        T::rem_ref_rhs(diff, mod_, td)
+    fn sub<'a>(&'a self, lhs: Cow<'a, Self::V>, rhs: Cow<'a, Self::V>) -> Cow<'a, Self::V> {
+        self.inner
+            .rem(self.inner.sub(lhs, rhs), Cow::Borrowed(&self.mod_))
     }
 }
-impl<T: EMul + ERem> EMul for Mod<T> {
-    fn one((mod_, td): &Self::TD) -> Self::V {
-        let ret = T::one(td);
-        assert_ne!(mod_, &ret);
+impl<T: SMul + SRem> SMul for Mod<T> {
+    fn one(&self) -> Cow<'_, Self::V> {
+        let ret = self.inner.one();
+        assert_ne!(&self.mod_, &*ret);
         ret
     }
-    fn mul(lhs: Self::V, rhs: Self::V, (mod_, td): &Self::TD) -> Self::V {
-        let sum: Self::V = T::mul(lhs, rhs, td);
-        T::rem_ref_rhs(sum, mod_, td)
+    fn mul<'a>(&'a self, lhs: Cow<'a, Self::V>, rhs: Cow<'a, Self::V>) -> Cow<'a, Self::V> {
+        self.inner
+            .rem(self.inner.mul(lhs, rhs), Cow::Borrowed(&self.mod_))
     }
 }
-impl<T: EFusedMulAdd + ERem> EFusedMulAdd for Mod<T> {
-    fn fused_mul_add_ref(acc: &mut Self::V, lhs: &Self::V, rhs: &Self::V, (mod_, td): &Self::TD) {
-        T::fused_mul_add_ref(acc, lhs, rhs, td);
-        *acc = T::rem_ref_rhs(mem::take(acc), mod_, td)
-    }
-}
+impl<T: SFusedMulAdd + SRem> SFusedMulAdd for Mod<T> {
+    fn fused_mul_add_ref(&self, acc: &mut Self::V, lhs: &Self::V, rhs: &Self::V) {
+        self.inner.fused_mul_add_ref(acc, lhs, rhs);
 
-impl<T: ERem> fmt::Display for Mod<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        Self::fmt_v(&self.v, &self.mod_and_td, f)?;
-        write!(f, " ")?;
-        Self::fmt_td(&self.mod_and_td, f)?;
-        Ok(())
+        let mut slot: Cow<'_, Self::V> = Cow::Owned(mem::take(acc));
+        slot = self.inner.rem(slot, Cow::Borrowed(&self.mod_));
+        *acc = slot.into_owned();
     }
 }

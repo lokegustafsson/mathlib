@@ -1,177 +1,129 @@
-use std::{fmt, mem};
+use std::{borrow::Cow, fmt, mem};
 
 pub trait ReqV: Default + Clone + Eq + std::fmt::Debug {}
-impl<T: Default + Clone + Eq + std::fmt::Debug> ReqV for T {}
+impl<V: Default + Clone + Eq + std::fmt::Debug> ReqV for V {}
 
-pub trait ReqTD: Clone + Eq + std::fmt::Debug {}
-impl<T: Clone + Eq + std::fmt::Debug> ReqTD for T {}
+pub trait ReqS: Clone + Eq + std::fmt::Display + std::fmt::Debug {}
+impl<S: Clone + Eq + std::fmt::Display + std::fmt::Debug> ReqS for S {}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct El<V: ReqV, TD: ReqTD> {
-    pub v: V,
-    pub td: TD,
+#[derive(Debug, PartialEq, Eq)]
+pub struct El<'a, S: Structure> {
+    pub v: Cow<'a, S::V>,
+    pub s: &'a S,
 }
 
-pub trait ElT {
+pub trait Structure: ReqS {
     type V: ReqV;
-    type TD: ReqTD;
-    fn take(self) -> El<Self::V, Self::TD>;
-    fn of(el: El<Self::V, Self::TD>) -> Self;
-    fn as_ref(&self) -> (&Self::V, &Self::TD);
-    fn as_mut(&mut self) -> (&mut Self::V, &Self::TD);
-    fn fmt_v(v: &Self::V, td: &Self::TD, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error>;
-    fn fmt_td(td: &Self::TD, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error>;
-}
-impl<T: ElT> ElTExt for T {}
-pub trait ElTExt: ElT + Sized {
-    fn lift<U: ElTLift<Inner = Self>>(self, td: &U::TD) -> U {
-        U::lifted_from(self, td.clone())
-    }
-    fn td(&self) -> &Self::TD {
-        self.as_ref().1
+    fn fmt_v(&self, v: &Self::V, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error>;
+    fn el<'a>(&'a self, v: impl Into<Self::V>) -> El<'a, Self> {
+        El {
+            v: Cow::Owned(v.into()),
+            s: self,
+        }
     }
 }
-pub trait ElTLift: ElT {
-    type Inner: ElT;
-    fn lifted_from(inner: Self::Inner, td: Self::TD) -> Self;
+pub trait SuperStructure: Structure {
+    type Inner: Structure;
+    fn lifted_from<'a>(&'a self, inner: El<'a, Self::Inner>) -> El<'a, Self>;
+}
+
+impl<'a, S: Structure> El<'a, S> {
+    pub fn copy<'b>(&'b self) -> El<'b, S> {
+        El {
+            v: Cow::Borrowed(&*self.v),
+            s: self.s,
+        }
+    }
+    pub fn extend_lifetime<'b>(self, s: &'b S) -> El<'b, S> {
+        assert_eq!(self.s, s);
+        El {
+            v: Cow::Owned(self.v.into_owned()),
+            s,
+        }
+    }
+    pub fn lift<S2: SuperStructure<Inner = S>>(self, s: &'a S2) -> El<'a, S2> {
+        s.lifted_from(self)
+    }
+}
+
+impl<S: Structure> fmt::Display for El<'_, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        self.s.fmt_v(&self.v, f)?;
+        write!(f, " ({})", self.s)?;
+        Ok(())
+    }
 }
 
 // element binary operations traits
 
-pub trait EAdd: ElT {
-    fn zero(td: &Self::TD) -> Self::V;
-    fn add_ref(lhs: &Self::V, rhs: &Self::V, td: &Self::TD) -> Self::V {
-        Self::add_ref_rhs(lhs.clone(), rhs, td)
-    }
-    fn add_ref_lhs(lhs: &Self::V, rhs: Self::V, td: &Self::TD) -> Self::V {
-        Self::add(lhs.clone(), rhs, td)
-    }
-    fn add_ref_rhs(lhs: Self::V, rhs: &Self::V, td: &Self::TD) -> Self::V {
-        Self::add(lhs, rhs.clone(), td)
-    }
-    fn add(lhs: Self::V, rhs: Self::V, td: &Self::TD) -> Self::V;
+pub trait SAdd: Structure {
+    fn zero(&self) -> Cow<'_, Self::V>;
+    fn add<'a>(&'a self, lhs: Cow<'a, Self::V>, rhs: Cow<'a, Self::V>) -> Cow<'a, Self::V>;
 }
-pub trait ESub: ElT + EAdd {
-    fn negate(v: &mut Self::V, td: &Self::TD);
-    fn sub_ref(lhs: &Self::V, rhs: &Self::V, td: &Self::TD) -> Self::V {
-        Self::sub_ref_rhs(lhs.clone(), rhs, td)
-    }
-    fn sub_ref_lhs(lhs: &Self::V, rhs: Self::V, td: &Self::TD) -> Self::V {
-        Self::sub(lhs.clone(), rhs, td)
-    }
-    fn sub_ref_rhs(lhs: Self::V, rhs: &Self::V, td: &Self::TD) -> Self::V {
-        Self::sub(lhs, rhs.clone(), td)
-    }
-    fn sub(lhs: Self::V, rhs: Self::V, td: &Self::TD) -> Self::V;
+pub trait SSub: Structure + SAdd {
+    fn negate<'a>(&'a self, v: &mut Cow<'a, Self::V>);
+    fn sub<'a>(&'a self, lhs: Cow<'a, Self::V>, rhs: Cow<'a, Self::V>) -> Cow<'a, Self::V>;
 }
-pub trait EMul: ElT {
-    fn one(td: &Self::TD) -> Self::V;
-    fn mul_ref(lhs: &Self::V, rhs: &Self::V, td: &Self::TD) -> Self::V {
-        Self::mul_ref_rhs(lhs.clone(), rhs, td)
-    }
-    fn mul_ref_lhs(lhs: &Self::V, rhs: Self::V, td: &Self::TD) -> Self::V {
-        Self::mul(lhs.clone(), rhs, td)
-    }
-    fn mul_ref_rhs(lhs: Self::V, rhs: &Self::V, td: &Self::TD) -> Self::V {
-        Self::mul(lhs, rhs.clone(), td)
-    }
-    fn mul(lhs: Self::V, rhs: Self::V, td: &Self::TD) -> Self::V;
+pub trait SMul: Structure {
+    fn one(&self) -> Cow<'_, Self::V>;
+    fn mul<'a>(&'a self, lhs: Cow<'a, Self::V>, rhs: Cow<'a, Self::V>) -> Cow<'a, Self::V>;
 }
-pub trait ERem: ElT {
-    fn rem_ref(lhs: &Self::V, rhs: &Self::V, td: &Self::TD) -> Self::V {
-        Self::rem_ref_rhs(lhs.clone(), rhs, td)
-    }
-    fn rem_ref_lhs(lhs: &Self::V, rhs: Self::V, td: &Self::TD) -> Self::V {
-        Self::rem(lhs.clone(), rhs, td)
-    }
-    fn rem_ref_rhs(lhs: Self::V, rhs: &Self::V, td: &Self::TD) -> Self::V {
-        Self::rem(lhs, rhs.clone(), td)
-    }
-    fn rem(lhs: Self::V, rhs: Self::V, td: &Self::TD) -> Self::V;
+pub trait SRem: Structure {
+    fn rem<'a>(&'a self, lhs: Cow<'a, Self::V>, rhs: Cow<'a, Self::V>) -> Cow<'a, Self::V>;
 }
-pub trait EFusedMulAdd: ElT + EAdd + EMul {
-    fn fused_mul_add_ref(acc: &mut Self::V, lhs: &Self::V, rhs: &Self::V, td: &Self::TD) {
-        *acc = Self::add(mem::take(acc), Self::mul_ref(lhs, rhs, td), td);
+pub trait SFusedMulAdd: Structure + SAdd + SMul {
+    fn fused_mul_add_ref(&self, acc: &mut Self::V, lhs: &Self::V, rhs: &Self::V) {
+        let mut slot = Cow::Owned(mem::take(acc));
+        slot = self.add(slot, self.mul(Cow::Borrowed(lhs), Cow::Borrowed(rhs)));
+        *acc = slot.into_owned();
     }
 }
 
-// std op helper macros
-
-macro_rules! op_body {
-    ($T:ty, $ETrait:path, $method:ident) => {
-        type Output = Self;
-        fn $method(self, rhs: Self) -> Self {
-            let lhs = self.take();
-            let rhs = rhs.take();
-            assert_eq!(lhs.td, rhs.td);
-            ElT::of($crate::core::El {
-                v: <$T as $ETrait>::$method(lhs.v, rhs.v, &lhs.td),
-                td: rhs.td,
-            })
+macro_rules! impl_op {
+    ($StructTrait:ident, $OpTrait:path, $method:ident, $OpTraitAssign:path, $method_assign:ident) => {
+        impl<'a, S: $StructTrait> $OpTrait for $crate::core::El<'a, S> {
+            type Output = Self;
+            fn $method(self, rhs: Self) -> Self {
+                assert_eq!(self.s, rhs.s);
+                $crate::core::El {
+                    v: $crate::$StructTrait::$method(self.s, self.v, rhs.v),
+                    s: self.s,
+                }
+            }
+        }
+        impl<'a, S: $StructTrait> $OpTraitAssign for $crate::core::El<'a, S> {
+            fn $method_assign(&mut self, rhs: Self) {
+                assert_eq!(self.s, rhs.s);
+                self.v = $crate::$StructTrait::$method(self.s, ::std::mem::take(&mut self.v), rhs.v)
+            }
         }
     };
 }
-macro_rules! op_body_assign {
-    ($T:ty, $ETrait:path, $method_assign:ident, $method_ref_rhs:ident) => {
-        fn $method_assign(&mut self, rhs: &Self) {
-            let (lhs_v, lhs_td) = self.as_mut();
-            let (rhs_v, rhs_td) = rhs.as_ref();
-            assert_eq!(lhs_td, rhs_td);
-            *lhs_v = <$T as $ETrait>::$method_ref_rhs(::std::mem::take(lhs_v), rhs_v, rhs_td)
-        }
-    };
-}
-
-// std op
-
-#[macro_export]
-macro_rules! op_body_add {
-    ($T:ty) => {
-        op_body!($T, $crate::core::EAdd, add);
-    };
-}
-#[macro_export]
-macro_rules! op_body_sub {
-    ($T:ty) => {
-        op_body!($T, $crate::core::ESub, sub);
-    };
-}
-#[macro_export]
-macro_rules! op_body_mul {
-    ($T:ty) => {
-        op_body!($T, $crate::core::EMul, mul);
-    };
-}
-#[macro_export]
-macro_rules! op_body_rem {
-    ($T:ty) => {
-        op_body!($T, $crate::core::ERem, rem);
-    };
-}
-
-// std op assign
-
-#[macro_export]
-macro_rules! op_body_add_assign {
-    ($T:ty) => {
-        op_body_assign!($T, $crate::core::EAdd, add_assign, add_ref_rhs);
-    };
-}
-#[macro_export]
-macro_rules! op_body_sub_assign {
-    ($T:ty) => {
-        op_body_assign!($T, $crate::core::ESub, sub_assign, sub_ref_rhs);
-    };
-}
-#[macro_export]
-macro_rules! op_body_mul_assign {
-    ($T:ty) => {
-        op_body_assign!($T, $crate::core::EMul, mul_assign, mul_ref_rhs);
-    };
-}
-#[macro_export]
-macro_rules! op_body_rem_assign {
-    ($T:ty) => {
-        op_body_assign!($T, $crate::core::ERem, rem_assign, rem_ref_rhs);
-    };
-}
+impl_op!(
+    SAdd,
+    ::std::ops::Add,
+    add,
+    ::std::ops::AddAssign,
+    add_assign
+);
+impl_op!(
+    SSub,
+    ::std::ops::Sub,
+    sub,
+    ::std::ops::SubAssign,
+    sub_assign
+);
+impl_op!(
+    SMul,
+    ::std::ops::Mul,
+    mul,
+    ::std::ops::MulAssign,
+    mul_assign
+);
+impl_op!(
+    SRem,
+    ::std::ops::Rem,
+    rem,
+    ::std::ops::RemAssign,
+    rem_assign
+);

@@ -1,183 +1,195 @@
-use crate::{EAdd, EFusedMulAdd, EMul, ESub, El, ElT, ElTLift};
-use std::{fmt, mem, sync::Arc};
+use crate::{El, SAdd, SFusedMulAdd, SMul, SSub, Structure, SuperStructure};
+use std::{borrow::Cow, fmt, mem};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DensePolynomial<T: EFusedMulAdd> {
-    coeffs: Vec<T::V>,
-    symb_and_td: (Arc<str>, T::TD),
+pub struct DensePolynomial<S: Structure + SFusedMulAdd> {
+    symbol: String,
+    inner: S,
 }
-impl<T: EFusedMulAdd> ElT for DensePolynomial<T> {
-    type V = Vec<T::V>;
-    type TD = (Arc<str>, T::TD);
-    fn take(self) -> El<Self::V, Self::TD> {
-        El {
-            v: self.coeffs,
-            td: self.symb_and_td,
-        }
-    }
-    fn of(el: El<Self::V, Self::TD>) -> Self {
-        Self {
-            coeffs: el.v,
-            symb_and_td: el.td,
-        }
-    }
-    fn as_ref(&self) -> (&Self::V, &Self::TD) {
-        (&self.coeffs, &self.symb_and_td)
-    }
-    fn as_mut(&mut self) -> (&mut Self::V, &Self::TD) {
-        (&mut self.coeffs, &self.symb_and_td)
-    }
-    fn fmt_v(
-        coeffs: &Self::V,
-        symb_and_td: &Self::TD,
-        f: &mut fmt::Formatter<'_>,
-    ) -> Result<(), fmt::Error> {
-        let (symb, td) = symb_and_td;
+impl<S: SFusedMulAdd> Structure for DensePolynomial<S> {
+    type V = Vec<S::V>;
+    fn fmt_v(&self, coeffs: &Self::V, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         for (i, (deg, coeff)) in coeffs
             .iter()
             .enumerate()
-            .filter(|(_, c)| **c != T::zero(td))
+            .filter(|(_, c)| *c != &*self.inner.zero())
             .rev()
             .enumerate()
         {
             if i != 0 {
                 write!(f, " + ")?;
             }
-            if deg == 0 || *coeff != T::one(td) {
-                T::fmt_v(coeff, td, f)?
+            if deg == 0 || coeff != &*self.inner.one() {
+                self.inner.fmt_v(coeff, f)?
             }
             match deg {
                 0 => {}
-                1 => write!(f, "{symb}")?,
-                _ => write!(f, "{symb}^{deg}")?,
+                1 => write!(f, "{}", self.symbol)?,
+                _ => write!(f, "{}^{deg}", self.symbol)?,
             }
         }
         Ok(())
     }
-    fn fmt_td(symb_and_td: &Self::TD, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        T::fmt_td(&symb_and_td.1, f)
+}
+impl<S: SFusedMulAdd> std::fmt::Display for DensePolynomial<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        if f.alternate() {
+            write!(f, ", ")?;
+        }
+        write!(f, "poly {}{:#}", self.symbol, self.inner)
     }
 }
-impl<T: EFusedMulAdd> ElTLift for DensePolynomial<T> {
-    type Inner = T;
-    fn lifted_from(inner: T, td: Self::TD) -> Self {
-        let El { v, td: inner_td } = inner.take();
-        assert_eq!(inner_td, td.1);
-        Self {
-            coeffs: vec![v],
-            symb_and_td: td,
+impl<S: SFusedMulAdd> SuperStructure for DensePolynomial<S> {
+    type Inner = S;
+    fn lifted_from(&self, inner: El<'_, Self::Inner>) -> El<'_, Self> {
+        let El { v, s } = inner;
+        assert_eq!(&self.inner, s);
+        El {
+            v: Cow::Owned(vec![v.into_owned()]),
+            s: &self,
         }
     }
 }
-impl<T: EFusedMulAdd> std::ops::Add for DensePolynomial<T> {
+/*
+impl<T: SFusedMulAdd> std::ops::Add for DensePolynomial<T> {
     op_body_add!(DensePolynomial<T>);
 }
-impl<T: EFusedMulAdd + ESub> std::ops::Sub for DensePolynomial<T> {
+impl<T: SFusedMulAdd + SSub> std::ops::Sub for DensePolynomial<T> {
     op_body_sub!(DensePolynomial<T>);
 }
-impl<T: EFusedMulAdd> std::ops::Mul for DensePolynomial<T> {
+impl<T: SFusedMulAdd> std::ops::Mul for DensePolynomial<T> {
     op_body_mul!(DensePolynomial<T>);
 }
-impl<T: EFusedMulAdd> std::ops::AddAssign<&DensePolynomial<T>> for DensePolynomial<T> {
+impl<T: SFusedMulAdd> std::ops::AddAssign<&DensePolynomial<T>> for DensePolynomial<T> {
     op_body_add_assign!(DensePolynomial<T>);
 }
-impl<T: EFusedMulAdd + ESub> std::ops::SubAssign<&DensePolynomial<T>> for DensePolynomial<T> {
+impl<T: SFusedMulAdd + SSub> std::ops::SubAssign<&DensePolynomial<T>> for DensePolynomial<T> {
     op_body_sub_assign!(DensePolynomial<T>);
 }
-impl<T: EFusedMulAdd> std::ops::MulAssign<&DensePolynomial<T>> for DensePolynomial<T> {
+impl<T: SFusedMulAdd> std::ops::MulAssign<&DensePolynomial<T>> for DensePolynomial<T> {
     op_body_mul_assign!(DensePolynomial<T>);
 }
+*/
 
-impl<T: EFusedMulAdd> DensePolynomial<T> {
-    pub fn new_symb(symb: impl Into<Arc<str>>, td: &T::TD) -> Self {
+impl<S: SFusedMulAdd> DensePolynomial<S> {
+    pub fn new_symb(symbol: impl AsRef<str>, inner: &S) -> Self {
         Self {
-            coeffs: vec![T::zero(&td), T::one(&td)],
-            symb_and_td: (symb.into(), td.clone()),
+            symbol: symbol.as_ref().to_owned(),
+            inner: inner.clone(),
+        }
+    }
+    pub fn symb(&self) -> El<'_, Self> {
+        El {
+            v: Cow::Owned(vec![
+                self.inner.zero().into_owned(),
+                self.inner.one().into_owned(),
+            ]),
+            s: &self,
         }
     }
 }
-impl<T: EFusedMulAdd> EAdd for DensePolynomial<T> {
-    fn zero(_: &Self::TD) -> Self::V {
-        Vec::new()
+impl<S: SFusedMulAdd> SAdd for DensePolynomial<S> {
+    fn zero(&self) -> Cow<'_, Self::V> {
+        Cow::Owned(Vec::new())
     }
-    fn add(lhs: Self::V, rhs: Self::V, (_, td): &Self::TD) -> Self::V {
-        let (mut big, small) = if rhs.len() > lhs.len() {
-            (rhs, lhs)
+    fn add<'a>(&'a self, lhs: Cow<'_, Self::V>, rhs: Cow<'_, Self::V>) -> Cow<'a, Self::V> {
+        let [lhs_cap, rhs_cap] = [&lhs, &rhs].map(|side| match side {
+            Cow::Borrowed(_) => 0,
+            Cow::Owned(v) => v.capacity(),
+        });
+        let (mut target, src) = if rhs_cap > lhs_cap {
+            (rhs.into_owned(), &lhs)
         } else {
-            (lhs, rhs)
+            (lhs.into_owned(), &rhs)
         };
-        for (slot, item) in Iterator::zip(big.iter_mut(), small.iter()) {
-            *slot = T::add_ref_rhs(mem::take(slot), item, td);
+        for (slot, item) in Iterator::zip(target.iter_mut(), src.iter()) {
+            let mut slot2 = Cow::Owned(mem::take(slot));
+            slot2 = self.inner.add(slot2, Cow::Borrowed(item));
+            *slot = slot2.into_owned();
         }
-        big
+        Cow::Owned(target)
     }
 }
-impl<T: EFusedMulAdd + ESub> ESub for DensePolynomial<T> {
-    fn negate(coeffs: &mut Self::V, (_, td): &Self::TD) {
-        for c in coeffs {
-            T::negate(c, td);
+impl<S: SFusedMulAdd + SSub> SSub for DensePolynomial<S> {
+    fn negate(&self, coeffs: &mut Cow<'_, Self::V>) {
+        for c in coeffs.to_mut() {
+            let mut item = Cow::Owned(mem::take(c));
+            self.inner.negate(&mut item);
+            *c = item.into_owned();
         }
     }
-    fn sub(mut lhs: Self::V, mut rhs: Self::V, (_, td): &Self::TD) -> Self::V {
-        if lhs.len() >= rhs.len() {
+    fn sub(&self, lhs: Cow<'_, Self::V>, rhs: Cow<'_, Self::V>) -> Cow<'_, Self::V> {
+        let [lhs_cap, rhs_cap] = [&lhs, &rhs].map(|side| match side {
+            Cow::Borrowed(_) => 0,
+            Cow::Owned(v) => v.capacity(),
+        });
+        if lhs_cap >= rhs_cap {
+            let mut lhs = lhs.into_owned();
             for (lhs_i, rhs_i) in Iterator::zip(lhs.iter_mut(), rhs.iter()) {
-                *lhs_i = T::sub_ref_rhs(mem::take(lhs_i), rhs_i, td);
+                let mut lhs_ii = Cow::Owned(mem::take(lhs_i));
+                lhs_ii = self.inner.sub(lhs_ii, Cow::Borrowed(rhs_i));
+                *lhs_i = lhs_ii.into_owned();
             }
-            lhs
+            Cow::Owned(lhs)
         } else {
+            let mut rhs = rhs.into_owned();
             for (lhs_i, rhs_i) in Iterator::zip(lhs.iter(), rhs.iter_mut()) {
-                *rhs_i = T::sub_ref_lhs(lhs_i, mem::take(rhs_i), td);
+                let mut rhs_ii = Cow::Owned(mem::take(rhs_i));
+                rhs_ii = self.inner.sub(Cow::Borrowed(lhs_i), rhs_ii);
+                *rhs_i = rhs_ii.into_owned();
             }
             for rhs_i in rhs.iter_mut().skip(lhs.len()) {
-                T::negate(rhs_i, td);
+                let mut rhs_ii = Cow::Owned(mem::take(rhs_i));
+                self.inner.negate(&mut rhs_ii);
+                *rhs_i = rhs_ii.into_owned();
             }
-            rhs
+            Cow::Owned(rhs)
         }
     }
 }
-impl<T: EFusedMulAdd> EMul for DensePolynomial<T> {
-    fn one((_, td): &Self::TD) -> Self::V {
-        vec![T::one(td)]
+impl<S: SFusedMulAdd> SMul for DensePolynomial<S> {
+    fn one(&self) -> Cow<'_, Self::V> {
+        Cow::Owned(vec![self.inner.one().into_owned()])
     }
-    fn mul(lhs: Self::V, rhs: Self::V, (_, td): &Self::TD) -> Self::V {
-        let (mut big, small) = if rhs.len() > lhs.len() {
-            (rhs, lhs)
+    fn mul(&self, lhs: Cow<'_, Self::V>, rhs: Cow<'_, Self::V>) -> Cow<'_, Self::V> {
+        let [lhs_cap, rhs_cap] = [&lhs, &rhs].map(|side| match side {
+            Cow::Borrowed(_) => 0,
+            Cow::Owned(v) => v.capacity(),
+        });
+        let (mut target, src) = if lhs_cap >= rhs_cap {
+            (lhs.into_owned(), &rhs)
         } else {
-            (lhs, rhs)
+            (rhs.into_owned(), &lhs)
         };
-        let n = big.len();
-        let m = small.len();
-        big.resize(n + m - 1, Default::default());
+        let n = target.len();
+        let m = src.len();
+        target.resize(n + m - 1, Default::default());
         for k in (0..(n + m - 1)).rev() {
-            big[k] = T::mul_ref_rhs(mem::take(&mut big[k]), &small[0], td);
+            {
+                let mut slot = Cow::Owned(mem::take(&mut target[k]));
+                slot = self.inner.mul(slot, Cow::Borrowed(&src[0]));
+                target[k] = slot.into_owned();
+            }
             for j in (usize::saturating_sub(k, n) + 1)..usize::min(m, k + 1) {
                 let i = k - j;
                 assert!(i < k);
-                let (pre, post) = big.split_at_mut(k);
-                T::fused_mul_add_ref(&mut post[0], &pre[i], &small[j], td);
+                let (pre, post) = target.split_at_mut(k);
+                self.inner.fused_mul_add_ref(&mut post[0], &pre[i], &src[j]);
             }
         }
-        big
+        Cow::Owned(target)
     }
 }
-impl<T: EFusedMulAdd> EFusedMulAdd for DensePolynomial<T> {
-    fn fused_mul_add_ref(acc: &mut Self::V, lhs: &Self::V, rhs: &Self::V, (_, td): &Self::TD) {
+impl<S: SFusedMulAdd> SFusedMulAdd for DensePolynomial<S> {
+    fn fused_mul_add_ref(&self, acc: &mut Self::V, lhs: &Self::V, rhs: &Self::V) {
         let n = lhs.len();
         let m = rhs.len();
         acc.resize(usize::max(acc.len(), n + m - 1), Default::default());
         for i in 0..n {
             for j in 0..m {
-                T::fused_mul_add_ref(&mut acc[i + j], &lhs[i], &rhs[j], td);
+                self.inner
+                    .fused_mul_add_ref(&mut acc[i + j], &lhs[i], &rhs[j]);
             }
         }
-    }
-}
-
-impl<T: EFusedMulAdd> fmt::Display for DensePolynomial<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        Self::fmt_v(&self.coeffs, &self.symb_and_td, f)?;
-        write!(f, " ")?;
-        Self::fmt_td(&self.symb_and_td, f)?;
-        Ok(())
     }
 }

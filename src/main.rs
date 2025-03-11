@@ -6,34 +6,40 @@
 // - Permutations?
 
 // NOTE: Pain points
-// - explicit lifting (required due to run time types?)
-// - cloning and memory management
+// - multiple lifting `a.lift(&mid).lift(&top)` (seems impossible to avoid)
+// - mutating functions, such as negate, interacting with Cow. Maybe enum(&T, &mut T) instead?
 
-use mathlib::{DensePolynomial, ElTExt, Int, Mod};
+use mathlib::{DensePolynomial, I, Int, Mod, Structure};
 
 fn main() {
-    let a = Mod::new(4i64, 13);
-    println!("{}", a.clone() * a.clone());
-    println!("{}", a.clone() - a);
+    let fixed_int: I<32> = I;
+    let mod13 = Mod::new(fixed_int.el(13));
+    let a = fixed_int.el(4).lift(&mod13);
+    println!("{}", a.copy() * a.copy());
+    println!("{}", a.copy() - a.copy());
 
-    let mut p = DensePolynomial::<Int>::new_symb("x", &());
-    let three = Int::from(3i32).lift(p.td());
+    let xpoly = DensePolynomial::new_symb("x", &Int);
+    let three = Int.el(3).lift(&xpoly);
+    let mut p = xpoly.symb();
 
     for _ in 0..4 {
         println!("{p}");
-        p += &three;
-        p = p.clone() * p;
+        p += three.copy();
+        p *= p.copy().extend_lifetime(&xpoly);
     }
 
-    let m = (Int::from(13), ());
-    let mut q = DensePolynomial::<Mod<Int>>::new_symb("x", &m);
-    let three = Int::from(3i32).lift::<Mod<Int>>(&m).lift(q.td());
+    let mod13 = Mod::new(Int.el(13));
+    let xpolymod = DensePolynomial::new_symb("x", &mod13);
+    let three = Int.el(3).lift(&mod13).lift(&xpolymod);
+    let mut q = xpolymod.symb();
 
     for _ in 0..4 {
         println!("{q}");
-        q += &three;
-        q = q.clone() * q;
+        q += three.copy();
+        q *= q.copy().extend_lifetime(&xpolymod);
     }
+
+    println!("{}", Int.el(12345));
 
     // TODO The code below will work after implementing polynomial rem
     /*

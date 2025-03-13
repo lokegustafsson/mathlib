@@ -41,6 +41,9 @@ impl<S: SFusedMulAdd> std::fmt::Display for DensePolynomial<S> {
 }
 impl<S: SFusedMulAdd> SuperStructure for DensePolynomial<S> {
     type Inner = S;
+    fn inner(&self) -> &Self::Inner {
+        &self.inner
+    }
     fn lifted_from(&self, inner: El<'_, Self::Inner>) -> El<'_, Self> {
         let El { v, s } = inner;
         assert_eq!(&self.inner, s);

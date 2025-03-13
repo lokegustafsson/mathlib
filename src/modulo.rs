@@ -24,6 +24,9 @@ impl<S: SRem> std::fmt::Display for Mod<S> {
 }
 impl<S: SRem> SuperStructure for Mod<S> {
     type Inner = S;
+    fn inner(&self) -> &Self::Inner {
+        &self.inner
+    }
     fn lifted_from<'a>(&'a self, inner: El<'a, Self::Inner>) -> El<'a, Self> {
         let El { v, s } = inner;
         assert_eq!(&self.inner, s);

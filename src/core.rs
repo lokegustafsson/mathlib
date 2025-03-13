@@ -24,8 +24,33 @@ pub trait Structure: ReqS {
 }
 pub trait SuperStructure: Structure {
     type Inner: Structure;
+    fn inner(&self) -> &Self::Inner;
     fn lifted_from<'a>(&'a self, inner: El<'a, Self::Inner>) -> El<'a, Self>;
+
+    fn el1<'a>(&'a self, v: impl Into<<Self::Inner as Structure>::V>) -> El<'a, Self> {
+        self.inner().el(v).lift(self)
+    }
 }
+pub trait Super2Structure: SuperStructure<Inner: SuperStructure> {
+    fn el2<'a>(
+        &'a self,
+        v: impl Into<<<Self::Inner as SuperStructure>::Inner as Structure>::V>,
+    ) -> El<'a, Self> {
+        self.inner().el1(v).lift(self)
+    }
+}
+pub trait Super3Structure: SuperStructure<Inner: Super2Structure> {
+    fn el3<'a>(
+        &'a self,
+        v: impl Into<
+            <<<Self::Inner as SuperStructure>::Inner as SuperStructure>::Inner as Structure>::V,
+        >,
+    ) -> El<'a, Self> {
+        self.inner().el2(v).lift(self)
+    }
+}
+impl<S2: SuperStructure<Inner: SuperStructure>> Super2Structure for S2 {}
+impl<S3: SuperStructure<Inner: SuperStructure<Inner: SuperStructure>>> Super3Structure for S3 {}
 
 impl<'a, S: Structure> El<'a, S> {
     pub fn copy<'b>(&'b self) -> El<'b, S> {
@@ -41,8 +66,30 @@ impl<'a, S: Structure> El<'a, S> {
             s,
         }
     }
-    pub fn lift<S2: SuperStructure<Inner = S>>(self, s: &'a S2) -> El<'a, S2> {
-        s.lifted_from(self)
+    pub fn lift<S1: SuperStructure<Inner = S>>(self, s1: &'a S1) -> El<'a, S1> {
+        s1.lifted_from(self)
+    }
+    pub fn lift2<S2: SuperStructure<Inner: SuperStructure<Inner = S>>>(
+        self,
+        s2: &'a S2,
+    ) -> El<'a, S2> {
+        self.lift(s2.inner()).lift(s2)
+    }
+    pub fn lift3<S3: SuperStructure<Inner: SuperStructure<Inner: SuperStructure<Inner = S>>>>(
+        self,
+        s3: &'a S3,
+    ) -> El<'a, S3> {
+        self.lift2(s3.inner()).lift(s3)
+    }
+    pub fn lift4<
+        S4: SuperStructure<
+            Inner: SuperStructure<Inner: SuperStructure<Inner: SuperStructure<Inner = S>>>,
+        >,
+    >(
+        self,
+        s4: &'a S4,
+    ) -> El<'a, S4> {
+        self.lift3(s4.inner()).lift(s4)
     }
 }
 

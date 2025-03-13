@@ -6,20 +6,19 @@
 // - Permutations?
 
 // NOTE: Pain points
-// - multiple lifting `a.lift(&mid).lift(&top)` (seems impossible to avoid)
 // - mutating functions, such as negate, interacting with Cow. Maybe enum(&T, &mut T) instead?
 
-use mathlib::{DensePolynomial, I, Int, Mod, Structure};
+use mathlib::{DensePolynomial, I, Int, Mod, Structure, SuperStructure, Super2Structure};
 
 fn main() {
     let fixed_int: I<32> = I;
     let mod13 = Mod::new(fixed_int.el(13));
-    let a = fixed_int.el(4).lift(&mod13);
+    let a = mod13.el1(4);
     println!("{}", a.copy() * a.copy());
     println!("{}", a.copy() - a.copy());
 
     let xpoly = DensePolynomial::new_symb("x", &Int);
-    let three = Int.el(3).lift(&xpoly);
+    let three = xpoly.el1(3);
     let mut p = xpoly.symb();
 
     for _ in 0..4 {
@@ -30,7 +29,7 @@ fn main() {
 
     let mod13 = Mod::new(Int.el(13));
     let xpolymod = DensePolynomial::new_symb("x", &mod13);
-    let three = Int.el(3).lift(&mod13).lift(&xpolymod);
+    let three = xpolymod.el2(3);
     let mut q = xpolymod.symb();
 
     for _ in 0..4 {
@@ -43,18 +42,17 @@ fn main() {
 
     // TODO The code below will work after implementing polynomial rem
     /*
-    let mod_num = (Int::from(293), ());
-    let x = DensePolynomial::<Mod<Int>>::new_symb("x", &mod_num);
-    let five = Int::from(5).lift::<Mod<Int>>(&mod_num).lift(x.td());
-    let three = Int::from(3).lift::<Mod<Int>>(&mod_num).lift(x.td());
+    let mod_num = Mod::new(Int.el(293));
+    let xpoly = DensePolynomial::new_symb("x", &mod_num);
+    let x = xpoly.symb();
 
-    let mod_poly = (x + five) * (x + three);
-    let x = Mod::new(x, mod_poly);
-    let mut r = x;
+    let mod_poly = (x + xpoly.el2(5)) * (x + xpoly.el2(3));
+    let mpoly = Mod::new(mod_poly);
+    let mut r = mpoly.symb();
 
     for _ in 0..4 {
         println!("{r}");
-        r += &three;
+        r += mpoly.el3(3);
         r = r.clone() * r;
     }
     */
